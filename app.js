@@ -38,31 +38,55 @@ function getFormData() {
     weights
   };
 }
+//Phương pháp quyết định TOPSIS
+function calculateTopsis(laptops, criteria) {
+  if (!laptops.length) return [];
 
-function scoreLaptop(laptop, criteria) {
-  const maxWeight = 3.5;
-  const portabilityScore = Math.max(0, ((maxWeight - laptop.trong_luong) / (maxWeight - 1.1)) * 100);
-  const totalWeight = Object.values(criteria.weights).reduce((sum, value) => sum + value, 0) || 1;
-  const normalized = {
-    performance: (laptop.cpu_score * criteria.weights.performance) / totalWeight,
-    graphics: (laptop.gpu_score * criteria.weights.graphics) / totalWeight,
-    portability: (portabilityScore * criteria.weights.portability) / totalWeight,
-    battery: (laptop.pin_score * criteria.weights.battery) / totalWeight
-  };
-  const score = normalized.performance + normalized.graphics + normalized.portability + normalized.battery;
+  // Chuyển cân nặng thành tiêu chí lợi ích: máy càng nhẹ, điểm càng cao
+  const matrix = laptops.map((laptop) => ({
+    laptop,
+    values: [
+      laptop.cpu_score,
+      laptop.gpu_score,
+      Math.max(0, ((3.5 - laptop.trong_luong) / (3.5 - 1.1)) * 100),
+      laptop.pin_score
+    ]
+  }));
+  const criteriaKeys = ["performance", "graphics", "portability", "battery"];
+  const denominators = criteriaKeys.map((_, index) => Math.sqrt(
+    matrix.reduce((sum, item) => sum + item.values[index] ** 2, 0)
+  ));
+  const totalWeight = criteriaKeys.reduce((sum, key) => sum + criteria.weights[key], 0) || 1;
+  const weights = criteriaKeys.map((key) => criteria.weights[key] / totalWeight);
+  const weightedMatrix = matrix.map((item) => item.values.map((value, index) =>
+    (value / denominators[index]) * weights[index]
+  ));
+  const idealPositive = criteriaKeys.map((_, index) => Math.max(...weightedMatrix.map((row) => row[index])));
+  const idealNegative = criteriaKeys.map((_, index) => Math.min(...weightedMatrix.map((row) => row[index])));
 
-  return { ...laptop, score, portabilityScore, normalized };
+  return matrix.map((item, rowIndex) => {
+    const row = weightedMatrix[rowIndex];
+    const distanceToPositive = Math.sqrt(row.reduce((sum, value, index) =>
+      sum + (value - idealPositive[index]) ** 2, 0
+    ));
+    const distanceToNegative = Math.sqrt(row.reduce((sum, value, index) =>
+      sum + (value - idealNegative[index]) ** 2, 0
+    ));
+    const score = distanceToNegative / (distanceToPositive + distanceToNegative || 1);
+    return { ...item.laptop, score: score * 100 };
+  });
 }
 
 function filterAndRank(criteria) {
-  return LAPTOPS
+  const filteredLaptops = LAPTOPS
     .filter((laptop) => criteria.need === "all" || laptop.loai_nhu_cau === criteria.need)
     .filter((laptop) => laptop.gia <= criteria.budget)
     .filter((laptop) => laptop.trong_luong <= criteria.maxWeight)
     .filter((laptop) => laptop.cpu_score >= criteria.minCpu)
     .filter((laptop) => laptop.gpu_score >= criteria.minGpu)
-    .filter((laptop) => laptop.pin_score >= criteria.minBattery)
-    .map((laptop) => scoreLaptop(laptop, criteria))
+    .filter((laptop) => laptop.pin_score >= criteria.minBattery);
+
+  return calculateTopsis(filteredLaptops, criteria)
     .sort((first, second) => second.score - first.score);
 }
 
@@ -126,3 +150,4 @@ document.querySelectorAll('input[type="range"]').forEach((input) => input.addEve
 form.addEventListener("submit", analyze);
 updateRangeLabels();
 renderResults(filterAndRank(getFormData()), getFormData());
+
